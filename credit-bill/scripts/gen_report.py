@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""任务X光（task-xray）— WorkBuddy 单会话任务流程与积分明细看板生成器
+"""WorkBuddy 积分账单（credit-bill）— 积分花在哪了：按模型/任务/每一步的账单生成器
 
 扫描 ~/.workbuddy/projects/<工作空间>/*.jsonl（含 subagents/ 子代理日志），
 把每个会话还原成「用户提问 → 思考 → 调用工具/Skill/MCP → 拿到结果 → 再思考」
@@ -8,7 +8,7 @@
 跨平台：Windows / macOS / Linux 通用，仅依赖 Python 标准库（3.8+），无需安装任何依赖。
 
 用法：
-    python gen_report.py                      # 输出到当前目录 task-xray.html
+    python gen_report.py                      # 输出到当前目录 credit-bill.html
     python gen_report.py --out 看板.html       # 自定义输出路径
     python gen_report.py --projects <目录>     # 自定义会话日志目录
     python gen_report.py --days 90            # 完整回放嵌入最近 N 天的会话（默认 90，0=全部）
@@ -22,10 +22,10 @@ try:
 except Exception:
     pass
 
-_ap = argparse.ArgumentParser(description="任务X光看板生成器")
+_ap = argparse.ArgumentParser(description="WorkBuddy 积分账单生成器")
 _ap.add_argument("--projects", default=os.path.join(os.path.expanduser("~"), ".workbuddy", "projects"),
                  help="WorkBuddy 会话日志目录（默认 ~/.workbuddy/projects）")
-_ap.add_argument("--out", default="task-xray.html", help="输出 HTML 路径（默认当前目录 task-xray.html）")
+_ap.add_argument("--out", default="credit-bill.html", help="输出 HTML 路径（默认当前目录 credit-bill.html）")
 _ap.add_argument("--days", type=int, default=30, help="完整回放嵌入最近 N 天的会话（默认 30，0=全部）")
 _ap.add_argument("--full", action="store_true", help="思考/工具返回不截断")
 _args = _ap.parse_args()
@@ -529,7 +529,7 @@ HTML = r'''<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>任务X光 · 每个任务的积分花在哪</title>
+<title>WorkBuddy 积分账单 · 积分花在哪，一笔一笔看清楚</title>
 <style>
 :root{
   --bg:#f5f6f8; --card:#ffffff; --text:#1f2329; --muted:#6b7280; --border:#e5e6eb;
@@ -624,16 +624,16 @@ footer{margin-top:28px;color:var(--muted);font-size:12px;line-height:1.9;border-
 <div class="wrap">
 <header class="top">
   <div>
-    <h1>任务X光</h1>
-    <div class="sub">每个会话、每一步请求的积分去向 · 生成于 __GEN__ · 数据源 __PROJECTS__</div>
+    <h1>WorkBuddy 积分账单</h1>
+    <div class="sub">积分花在哪了 · 哪些模型哪些任务花得多 · 每一笔都有明细 · 生成于 __GEN__</div>
   </div>
   <button class="btn" id="themeBtn">切换深浅色</button>
 </header>
 
 <div class="kpis">
-  <div class="kpi"><div class="v">__N_SESS__<em>个</em></div><div class="l">会话（任务窗口）</div></div>
+  <div class="kpi"><div class="v" style="color:var(--credit)">__N_CREDIT__<em>积分</em></div><div class="l">本期积分总支出</div></div>
+  <div class="kpi"><div class="v">__N_SESS__<em>笔</em></div><div class="l">消费笔数（会话）</div></div>
   <div class="kpi"><div class="v">__N_STEP__<em>步</em></div><div class="l">模型请求步骤</div></div>
-  <div class="kpi"><div class="v" style="color:var(--credit)">__N_CREDIT__<em>积分</em></div><div class="l">官方实际积分合计</div></div>
   <div class="kpi"><div class="v">__N_TOK__</div><div class="l">Token 合计（输入+输出）</div></div>
   <div class="kpi"><div class="v">__N_THINK__</div><div class="l">其中思考 token</div></div>
   <div class="kpi"><div class="v">__N_CACHE__<em>%</em></div><div class="l">输入缓存命中率</div></div>
@@ -645,7 +645,7 @@ footer{margin-top:28px;color:var(--muted);font-size:12px;line-height:1.9;border-
 </div>
 
 <div class="card">
-  <h2><span class="dot"></span>模型对比：标称倍率 vs 实际每百万 token 积分</h2>
+  <h2><span class="dot"></span>钱都花在哪些模型上了 <span class="muted" style="font-weight:400;font-size:12px">（标称倍率只是名义参考，实际每百万 token 积分才是真实单价）</span></h2>
   __MODEL_BARS__
   <div class="legend">
     <span><i style="background:var(--accent)"></i>该模型累计积分（条形长度）</span>
@@ -654,18 +654,21 @@ footer{margin-top:28px;color:var(--muted);font-size:12px;line-height:1.9;border-
 </div>
 
 <div class="card">
-  <h2><span class="dot"></span>本机工具调用 TOP10</h2>
+  <h2><span class="dot"></span>积分都经了哪些工具的手（调用 TOP10）</h2>
   <div>__TOOL_TAGS__</div>
   <div class="legend">任务越复杂，工具/Skill/MCP 调用越密集，回填进上下文的内容就越多——这是 token 涨得快的主因之一。</div>
 </div>
 
 <div class="card">
-  <h2><span class="dot"></span>会话列表 <span class="muted" style="font-weight:400;font-size:12px">（点任意一行，看这个任务的完整回放）</span></h2>
+  <h2><span class="dot"></span>哪些任务花得多？消费明细清单 <span class="muted" style="font-weight:400;font-size:12px">（点任意一行，看这一笔的完整明细）</span></h2>
   <div class="filters" id="filters">
     <button class="btn act" data-d="7">近 7 天</button>
     <button class="btn" data-d="30">近 30 天</button>
     <button class="btn" data-d="90">近 90 天</button>
     <button class="btn" data-d="0">全部</button>
+    <span style="width:14px"></span>
+    <button class="btn act" data-s="time">按时间</button>
+    <button class="btn" data-s="credit">按积分（多→少）</button>
   </div>
   <div style="overflow-x:auto">
   <table>
@@ -702,15 +705,21 @@ try { theme = localStorage.getItem('tx-theme') || 'light'; } catch(e) {}
 document.documentElement.setAttribute('data-theme', theme);
 $('themeBtn').onclick = function(){ theme = theme==='light'?'dark':'light'; document.documentElement.setAttribute('data-theme', theme); try { localStorage.setItem('tx-theme', theme); } catch(e) {} };
 
-// 窗口过滤
+// 窗口过滤 + 排序
 var curDays = 7;
+var curSort = 'time';
 function renderList(){
   var cut = curDays>0 ? (Date.now()/1000 - curDays*86400) : 0;
+  var rows = [];
+  DATA.sessions.forEach(function(s){ if(!(cut && s.st < cut)) rows.push(s); });
+  if(curSort === 'credit'){
+    // 免积分会话排最后，其余按积分从多到少
+    rows.sort(function(a,b){ var ca = a.nc ? -1 : a.credit, cb = b.nc ? -1 : b.credit; return cb !== ca ? cb - ca : (b.st||0)-(a.st||0); });
+  } else {
+    rows.sort(function(a,b){ return (b.st||0)-(a.st||0); });
+  }
   var html = '';
-  var n = 0;
-  DATA.sessions.forEach(function(s){
-    if(cut && s.st < cut) return;
-    n++;
+  rows.forEach(function(s){
     var tools = Object.keys(s.tools||{}).slice(0,3).map(function(k){return esc(k)+'×'+s.tools[k];}).join('、') || '—';
     html += '<tr class="sess-row'+(s.replay?'':' no-replay')+'" data-id="'+esc(s.id)+'">'
       + '<td class="nowrap">'+fmtDt(s.st)+'</td>'
@@ -723,10 +732,16 @@ function renderList(){
   });
   $('sessBody').innerHTML = html || '<tr><td colspan="7" class="empty">该时间范围内没有会话</td></tr>';
 }
-Array.prototype.forEach.call(document.querySelectorAll('#filters .btn'), function(b){
+Array.prototype.forEach.call(document.querySelectorAll('#filters .btn[data-d]'), function(b){
   b.onclick = function(){
-    Array.prototype.forEach.call(document.querySelectorAll('#filters .btn'), function(x){x.classList.remove('act');});
+    Array.prototype.forEach.call(document.querySelectorAll('#filters .btn[data-d]'), function(x){x.classList.remove('act');});
     b.classList.add('act'); curDays = +b.dataset.d; renderList();
+  };
+});
+Array.prototype.forEach.call(document.querySelectorAll('#filters .btn[data-s]'), function(b){
+  b.onclick = function(){
+    Array.prototype.forEach.call(document.querySelectorAll('#filters .btn[data-s]'), function(x){x.classList.remove('act');});
+    b.classList.add('act'); curSort = b.dataset.s; renderList();
   };
 });
 renderList();
@@ -798,7 +813,7 @@ function openSession(id){
       + '<div style="padding:28px 6px;line-height:2">'
       + '<div style="font-weight:600;margin-bottom:6px">这个会话只有汇总，没有逐步流程</div>'
       + '<div class="muted">生成看板时默认只把近 '+DATA.replay_days+' 天的会话嵌入完整回放，这个会话不在范围内（共 '+s.steps.toLocaleString()+' 步请求、'+(s.nc?'不计积分':s.credit.toLocaleString()+' 积分')+'、'+fmtTok(s.it+s.ot)+' token）。</div>'
-      + '<div>想看它的完整流程，在对话里对 AI 说一句「<b>重新生成任务X光，回放全部会话</b>」就行了。</div>'
+      + '<div>想看它的完整流程，在对话里对 AI 说一句「<b>重新生成积分账单，回放全部会话</b>」就行了。</div>'
       + '</div>';
     $('replayCard').style.display = '';
     $('replayCard').scrollIntoView({behavior:'smooth', block:'start'});
