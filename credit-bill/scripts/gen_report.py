@@ -473,15 +473,15 @@ def svg_story():
         thr = min(cand, key=lambda r: r['rate'])
         o.append('<rect x="%d" y="194" width="284" height="72" rx="8" fill="var(--card)" stroke="%s" stroke-width="1.2"/>'
                  '<text x="%d" y="218" fill="%s" font-size="12" font-weight="600">本机真实账单</text>'
-                 '<text x="%d" y="240" fill="%s" font-size="12">花最多：%s，实际 %.1f 积分/百万token</text>'
-                 '<text x="%d" y="258" fill="%s" font-size="12">最省：%s，实际 %.1f 积分/百万token</text>'
+                 '<text x="%d" y="240" fill="%s" font-size="11.5">消耗最多：%s，%.1f 积分/百万token</text>'
+                 '<text x="%d" y="258" fill="%s" font-size="11.5">实际最省：%s，%.1f 积分/百万token</text>'
                  % (rx, B, rx + 14, T, rx + 14, T, esc(top['m']), top['rate'],
                     rx + 14, M, esc(thr['m']), thr['rate']))
 
     # —— 结论条 ——
     o.append('<rect x="10" y="282" width="660" height="30" rx="8" fill="var(--accent)" fill-opacity="0.08"/>'
              '<text x="340" y="301" text-anchor="middle" fill="%s" font-size="12.5" font-weight="600">'
-             '倍率只是单价，任务决定烧多少 token。任务越复杂、轮次越多，倍率再低也能烧出高积分。</text>' % T)
+             '每一轮请求都在消耗积分：任务越复杂、轮次越多、回填越厚，消耗就越大；倍率只是每单位 token 的单价。</text>' % T)
     o.append('</svg>')
     return ''.join(o)
 
@@ -489,10 +489,12 @@ def svg_story():
 def build_story():
     """故事卡 = 图解 + 一行补充说明"""
     s = [svg_story()]
-    s.append('<p class="muted" style="margin:12px 2px 0">看懂这张图，就看懂了积分账单：倍率决定的是「每单位 token 多少钱」，'
-             '而账单 = 单价 × 实际烧掉的 token。agent 每一轮思考、每一次读文件、每一次调用工具或技能，'
-             '返回的结果都会塞回上下文，跟着下一轮请求原样再发一遍——任务越复杂、轮次越多、工具回填越厚，'
-             'token 总量就越大。下面每个会话的「上下文滚雪球」图，说的就是这件事在你电脑上的真实发生过程。</p>')
+    s.append('<p class="muted" style="margin:12px 2px 0">看懂这张图，就看懂了积分是怎么被消耗的：你发出一句话之后，'
+             'agent 并不是一次就答完，而是思考、调工具、拿结果、再思考，这样循环很多轮，'
+             '每一轮请求都要把前面所有内容原样再发一遍，token 就这样一轮一轮滚起来。'
+             '积分 = 每轮 token 加总 × 模型单价，倍率决定的是单价，任务越复杂、轮次越多、工具回填越厚，'
+             'token 总量就越大，积分也就消耗得越多。下面每个会话的「上下文滚雪球」图，'
+             '说的就是这件事在你电脑上的真实发生过程。</p>')
     return ''.join(s)
 
 
@@ -656,7 +658,7 @@ footer{margin-top:28px;color:var(--muted);font-size:12px;line-height:1.9;border-
 <header class="top">
   <div>
     <h1>WorkBuddy 积分账单</h1>
-    <div class="sub">积分花在哪了 · 哪些模型哪些任务花得多 · 每一笔都有明细 · 生成于 __GEN__</div>
+    <div class="sub">积分花在哪了 · 哪些模型哪些任务消耗多 · 每一笔都有明细 · 生成于 __GEN__</div>
   </div>
   <button class="btn" id="themeBtn">切换深浅色</button>
 </header>
@@ -671,12 +673,12 @@ footer{margin-top:28px;color:var(--muted);font-size:12px;line-height:1.9;border-
 </div>
 
 <div class="card">
-  <h2><span class="dot"></span>为什么倍率低的模型，反而更耗积分？</h2>
+  <h2><span class="dot"></span>积分是怎么被一步步消耗掉的？</h2>
   <div class="story">__STORY__</div>
 </div>
 
 <div class="card">
-  <h2><span class="dot"></span>钱都花在哪些模型上了 <span class="muted" style="font-weight:400;font-size:12px">（标称倍率只是名义参考，实际每百万 token 积分才是真实单价）</span></h2>
+  <h2><span class="dot"></span>WorkBuddy 积分都花在哪些模型上了 <span class="muted" style="font-weight:400;font-size:12px">（标称倍率只是名义参考，实际每百万 token 积分才是真实单价）</span></h2>
   __MODEL_BARS__
   <div class="legend">
     <span><i style="background:var(--accent)"></i>该模型累计积分（条形长度）</span>
@@ -685,14 +687,14 @@ footer{margin-top:28px;color:var(--muted);font-size:12px;line-height:1.9;border-
 </div>
 
 <div class="card">
-  <h2><span class="dot"></span>积分都经了哪些工具的手（调用 TOP10）</h2>
+  <h2><span class="dot"></span>积分被哪些工具消耗得多（调用 TOP10）</h2>
   <div style="margin-bottom:8px">__TOOL_CATS__</div>
   <div>__TOOL_TAGS__</div>
   <div class="legend">上面一行是分类汇总：普通工具、Skill 技能、MCP 工具、多代理/任务管理、联网检索全部计入（子代理的调用也并入所属任务）。下面是按具体名称排的 TOP10。任务越复杂，工具/技能调用越密集，回填进上下文的内容就越多——这是 token 涨得快的主因之一。</div>
 </div>
 
 <div class="card">
-  <h2><span class="dot"></span>哪些任务花得多？消费明细清单 <span class="muted" style="font-weight:400;font-size:12px">（点任意一行，看这一笔的完整明细）</span></h2>
+  <h2><span class="dot"></span>每个任务消耗的积分是多少？积分消费明细清单 <span class="muted" style="font-weight:400;font-size:12px">（点任意一行，看这一笔的完整明细）</span></h2>
   <div class="filters" id="filters">
     <button class="btn act" data-d="7">近 7 天</button>
     <button class="btn" data-d="30">近 30 天</button>
