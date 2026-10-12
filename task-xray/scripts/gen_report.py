@@ -346,10 +346,13 @@ model_rows.sort(key=lambda r: -r['credit'])
 sess_list = []
 for sid, d in sessions.items():
     if d['tot']['steps'] == 0: continue
+    tot_credit = d['tot']['credit']
+    tot_tok = d['tot']['it'] + d['tot']['ot']
     sess_list.append(dict(id=d['id'][:8], full_id=d['id'],
                           t=d['title_ai'] or d['title'] or '(无标题会话)',
                           w=ws_names.get(d['folder'], short_ws(d['folder'])),
-                          st=d['st'] or 0, steps=d['tot']['steps'], credit=round(d['tot']['credit'], 1),
+                          st=d['st'] or 0, steps=d['tot']['steps'], credit=round(tot_credit, 1),
+                          nc=1 if (tot_credit <= 0 and tot_tok > 0) else 0,
                           it=d['tot']['it'], ot=d['tot']['ot'], ch=d['tot']['ch'], think=d['tot']['think'],
                           models=sorted(d['models'], key=lambda m: -d['models'][m]),
                           tools=dict(sorted(d['tools'].items(), key=lambda x: -x[1])[:6]),
@@ -393,6 +396,13 @@ def svg_model_bars():
             % (y + RH - 8, esc(r['m']), X0, y + 3, w, RH - 6, 0.9 - i * 0.05, X0 + w + 8, y + RH - 8,
                '{:,.0f}'.format(r['credit']), r['rate'], mult_s))
     out.append('</svg>')
+    free_rows = [r for r in model_rows if r['credit'] <= 0 and (r['it'] + r['ot']) > 0]
+    if free_rows:
+        names = '、'.join('%s（%s token）' % (esc(r['m']), fmt_tokens(r['it'] + r['ot']))
+                          for r in sorted(free_rows, key=lambda x: -(x['it'] + x['ot']))[:6])
+        out.append('<p class="muted" style="margin-top:10px">上图只画了计费模型。另有几个模型的日志积分一直是 0，'
+                   '它们走的是免费或预览通道，不扣积分：%s。token 是真实消耗的，只是平台不扣积分，'
+                   '所以这类会话在列表里显示「不计积分」。</p>' % names)
     return ''.join(out)
 
 
@@ -429,6 +439,8 @@ def build_session_rows():
     for s in sess_list[:200]:
         tools = '、'.join('%s×%d' % (esc(k), v) for k, v in list(s['tools'].items())[:3]) or '—'
         badge = '' if s['replay'] else '<span class="tag tag-warn">超出回放范围</span>'
+        credit_s = ('<span class="muted" title="本会话模型走免费/预览通道，平台日志回传积分为 0，不扣积分">不计积分</span>'
+                    if s.get('nc') else '{:,.0f}'.format(s['credit']))
         out.append(
             '<tr class="sess-row%s" data-id="%s">'
             '<td class="nowrap">%s</td>'
@@ -441,7 +453,7 @@ def build_session_rows():
             '</tr>'
             % ('' if s['replay'] else ' no-replay', esc(s['id']), fmt_dt(s['st']),
                esc(s['full_id']), esc(s['t']), badge, esc(s['w']),
-               '{:,}'.format(s['steps']), '{:,.0f}'.format(s['credit']),
+               '{:,}'.format(s['steps']), credit_s,
                esc('、'.join(s['models'][:2])), tools))
     return ''.join(out)
 
@@ -456,6 +468,7 @@ DATA = dict(
     models=model_rows,
     tools=[dict(n=k, c=v) for k, v in sorted(g_tools.items(), key=lambda x: -x[1])[:15]],
     sessions=[dict(id=s['id'], t=s['t'], w=s['w'], st=s['st'], steps=s['steps'], credit=s['credit'],
+                   nc=s.get('nc', 0),
                    it=s['it'], ot=s['ot'], ch=s['ch'], think=s['think'], models=s['models'],
                    tools=s['tools'], replay=s['replay'], evs=s['evs']) for s in sess_list[:200]],
 )
@@ -630,6 +643,9 @@ footer{margin-top:28px;color:var(--muted);font-size:12px;line-height:1.9;border-
 <script>
 var DATA = __DATA_JSON__;
 var $ = function(id){ return document.getElementById(id); };
+var curNC = false;  // 当前回放会话是否为免积分（免费/预览）模型
+var FREE = {};      // 日志积分恒为 0 的模型（免费/预览通道）
+DATA.models.forEach(function(r){ if(r.credit<=0 && (r.it+r.ot)>0) FREE[r.m]=1; });
 function fmtTok(n){ if(n>=1e8) return (n/1e8).toFixed(2)+' 亿'; if(n>=1e4) return (n/1e4).toFixed(1)+' 万'; return n.toLocaleString(); }
 function fmtDt(ts){ if(!ts) return '—'; var d=new Date(ts*1000); function p(x){return (x<10?'0':'')+x;} return p(d.getMonth()+1)+'-'+p(d.getDate())+' '+p(d.getHours())+':'+p(d.getMinutes()); }
 function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
@@ -654,7 +670,7 @@ function renderList(){
       + '<td class="s-title" title="'+esc(s.id)+'">'+esc(s.t)+(s.replay?'':' <span class="tag tag-warn">超出回放范围</span>')+'</td>'
       + '<td class="nowrap muted">'+esc(s.w)+'</td>'
       + '<td class="num">'+s.steps.toLocaleString()+'</td>'
-      + '<td class="num strong">'+s.credit.toLocaleString()+'</td>'
+      + '<td class="num strong">'+(s.nc?'<span class="muted" title="本会话模型走免费/预览通道，平台日志回传积分为 0，不扣积分">不计积分</span>':s.credit.toLocaleString())+'</td>'
       + '<td class="nowrap muted">'+esc((s.models||[]).slice(0,2).join('、'))+'</td>'
       + '<td class="muted tools-cell">'+tools+'</td></tr>';
   });
@@ -716,7 +732,7 @@ function stepHtml(e, i){
          + '<div class="detail">'+esc(e.a)+'\n\n—— 返回 ——\n'+esc(e.r)+'</div>';
   }
   var u = e.u;
-  if(u) meta = tokBar(u) + '<br>' + (u.c>0?'<span class="cr">'+u.c.toFixed(1)+' 积分</span>':'0 积分')
+  if(u) meta = tokBar(u) + '<br>' + (u.c>0?'<span class="cr">'+u.c.toFixed(1)+' 积分</span>':((curNC||FREE[e.m])?'<span class="muted">不计积分</span>':'0 积分'))
          + ' · '+fmtTok(u.it+u.ot)+' tok';
   return '<div class="step"><div class="ix">'+(i+1)+'</div>'+badge+'<div class="body">'+body+'</div><div class="meta">'+meta+'</div></div>';
 }
@@ -728,12 +744,13 @@ function openSession(id){
   var s = null;
   DATA.sessions.forEach(function(x){ if(x.id===id) s=x; });
   if(!s || !s.replay){ return; }
+  curNC = !!s.nc;
   Array.prototype.forEach.call(document.querySelectorAll('.sess-row'), function(r){ r.classList.toggle('sel', r.dataset.id===id); });
   var evs = s.evs || [];
   var html = '<div class="replay-head"><h2 style="margin:0">'+esc(s.t)+'</h2><span class="muted">'+fmtDt(s.st)+' · '+esc(s.w)+'</span></div>'
     + '<div class="replay-stats">'
     + '<span>请求步骤 <b>'+s.steps.toLocaleString()+'</b></span>'
-    + '<span>积分 <b style="color:var(--credit)">'+s.credit.toLocaleString()+'</b></span>'
+    + '<span>积分 <b style="color:var(--credit)">'+(s.nc?'0（免费/预览通道，不扣积分）':s.credit.toLocaleString())+'</b></span>'
     + '<span>Token <b>'+fmtTok(s.it+s.ot)+'</b>（输入 '+fmtTok(s.it)+' / 输出 '+fmtTok(s.ot)+'）</span>'
     + '<span>思考 <b>'+fmtTok(s.think)+'</b></span>'
     + '<span>缓存命中 <b>'+(s.it?Math.round(s.ch/s.it*100):0)+'%</b></span>'
