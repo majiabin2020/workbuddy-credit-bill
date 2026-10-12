@@ -330,6 +330,22 @@ for d in sessions.values():
     for m, n in d['models'].items(): g_models[m] = g_models.get(m, 0) + n
     for tn, n in d['tools'].items(): g_tools[tn] = g_tools.get(tn, 0) + n
 
+AGENT_TOOLS = {'Agent', 'Task', 'SendMessage', 'CreateColleague', 'CreateChannel', 'ListColleagues',
+               'ChannelTasks', 'MessageColleague', 'SpeakInChannel', 'TaskOutput', 'TaskStop',
+               'TeamCreate', 'TeamDelete', 'TaskCreate', 'TaskUpdate', 'TaskGet', 'TaskList'}
+def tool_cat(n):
+    """工具名归类：Skill / MCP / 多代理 / 联网 / 内置，保证小白能看懂四类都在统计内"""
+    if n == 'Skill': return 'Skill 技能'
+    if n.startswith('mcp__'): return 'MCP 工具'
+    if n in AGENT_TOOLS: return '多代理/任务管理'
+    if n in ('WebFetch', 'WebSearch'): return '联网检索'
+    return '内置工具'
+
+g_tool_cats = {}
+for tn, n in g_tools.items():
+    c = tool_cat(tn)
+    g_tool_cats[c] = g_tool_cats.get(c, 0) + n
+
 model_rows = []
 for m, steps in sorted(g_models.items(), key=lambda x: -x[1]):
     it = ot = ch = th = cr = 0.0
@@ -513,6 +529,7 @@ DATA = dict(
                ch=g_tot['ch'], think=g_tot['think'], credit=round(g_tot['credit'], 1)),
     models=model_rows,
     tools=[dict(n=k, c=v) for k, v in sorted(g_tools.items(), key=lambda x: -x[1])[:15]],
+    tool_cats=[dict(n=k, c=v) for k, v in sorted(g_tool_cats.items(), key=lambda x: -x[1])],
     sessions=[dict(id=s['id'], t=s['t'], w=s['w'], st=s['st'], steps=s['steps'], credit=s['credit'],
                    nc=s.get('nc', 0),
                    it=s['it'], ot=s['ot'], ch=s['ch'], think=s['think'], models=s['models'],
@@ -521,6 +538,10 @@ DATA = dict(
 DATA_JSON = json.dumps(DATA, ensure_ascii=False, separators=(',', ':')).replace('</', '<\\/')
 
 tool_tags = ''.join('<span class="tool-tag">%s ×%s</span>' % (esc(t['n']), t['c']) for t in DATA['tools'][:10])
+CAT_CLASS = {'Skill 技能': 'cat-skill', 'MCP 工具': 'cat-mcp', '多代理/任务管理': 'cat-agent',
+             '联网检索': 'cat-web', '内置工具': 'cat-builtin'}
+tool_cat_tags = ''.join('<span class="tool-tag %s"><b>%s</b> ×%s</span>' % (CAT_CLASS.get(t['n'], ''), esc(t['n']), t['c'])
+                        for t in DATA['tool_cats'])
 story_html = build_story()
 cache_hit_pct = (g_tot['ch'] / g_tot['it'] * 100) if g_tot['it'] else 0
 
@@ -577,6 +598,12 @@ tr:last-child td{border-bottom:none}
 .tag{display:inline-block;font-size:11px;padding:1px 7px;border-radius:20px;background:rgba(91,91,214,.12);color:var(--accent);margin-left:6px;vertical-align:1px}
 .tag-warn{background:rgba(217,119,6,.14);color:var(--warn)}
 .tool-tag{display:inline-block;background:var(--code-bg);border:1px solid var(--border);border-radius:6px;padding:2px 8px;margin:0 6px 6px 0;font-size:12px;color:var(--muted)}
+.tool-tag b{font-weight:600}
+.tool-tag.cat-skill{background:rgba(124,92,214,.13);border-color:rgba(124,92,214,.4);color:var(--accent-2)}
+.tool-tag.cat-mcp{background:rgba(59,130,246,.12);border-color:rgba(59,130,246,.4);color:var(--it)}
+.tool-tag.cat-agent{background:rgba(14,159,110,.12);border-color:rgba(14,159,110,.4);color:var(--ot)}
+.tool-tag.cat-web{background:rgba(6,182,212,.12);border-color:rgba(6,182,212,.4);color:#0891b2}
+html[data-theme="dark"] .tool-tag.cat-web{color:#22d3ee}
 .chart{width:100%;height:auto;display:block}
 .sv-lbl{font-size:11.5px;fill:var(--text)}
 .sv-val{font-size:11px;fill:var(--muted)}
@@ -659,8 +686,9 @@ footer{margin-top:28px;color:var(--muted);font-size:12px;line-height:1.9;border-
 
 <div class="card">
   <h2><span class="dot"></span>积分都经了哪些工具的手（调用 TOP10）</h2>
+  <div style="margin-bottom:8px">__TOOL_CATS__</div>
   <div>__TOOL_TAGS__</div>
-  <div class="legend">任务越复杂，工具/Skill/MCP 调用越密集，回填进上下文的内容就越多——这是 token 涨得快的主因之一。</div>
+  <div class="legend">上面一行是分类汇总：普通工具、Skill 技能、MCP 工具、多代理/任务管理、联网检索全部计入（子代理的调用也并入所属任务）。下面是按具体名称排的 TOP10。任务越复杂，工具/技能调用越密集，回填进上下文的内容就越多——这是 token 涨得快的主因之一。</div>
 </div>
 
 <div class="card">
@@ -876,6 +904,7 @@ html = (HTML
         .replace('__MODEL_BARS__', svg_model_bars())
         .replace('__MULT_SRC__', esc(MULT_SRC))
         .replace('__TOOL_TAGS__', tool_tags)
+        .replace('__TOOL_CATS__', tool_cat_tags)
         .replace('__SESS_ROWS__', build_session_rows())
         .replace('__DATA_JSON__', DATA_JSON))
 
