@@ -611,7 +611,11 @@ tr:last-child td{border-bottom:none}
 .tok i{display:block;height:100%}
 .tok .t-it{background:var(--it)} .tok .t-ch{background:var(--ch)} .tok .t-th{background:var(--think)} .tok .t-ot{background:var(--ot)}
 .step .meta{flex:0 0 auto;text-align:right;font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap;padding-top:2px}
-.step .meta .cr{color:var(--credit);font-weight:600}
+.bill{display:inline-block;margin:2px 0 4px;padding:2px 10px;border-radius:14px;font-size:12.5px;font-weight:700;line-height:1.6;letter-spacing:.3px}
+.bill.paid{background:rgba(245,158,11,.16);color:var(--credit);border:1px solid rgba(245,158,11,.5)}
+.bill.free{background:rgba(14,159,110,.14);color:var(--ok);border:1px solid rgba(14,159,110,.45)}
+.bill.zero{background:var(--code-bg);color:var(--muted);border:1px solid var(--border)}
+.tokn{font-size:12.5px;font-weight:700;color:var(--text);margin-left:6px}
 .ok-y{color:var(--ok)} .ok-n{color:var(--bad)}
 .gap-note{text-align:center;color:var(--warn);font-size:12px;padding:10px;background:rgba(217,119,6,.08);border-radius:8px;margin:8px 0}
 footer{margin-top:28px;color:var(--muted);font-size:12px;line-height:1.9;border-top:1px solid var(--border);padding-top:14px}
@@ -794,8 +798,13 @@ function stepHtml(e, i){
          + '<div class="detail">'+esc(e.a)+'\n\n—— 返回 ——\n'+esc(e.r)+'</div>';
   }
   var u = e.u;
-  if(u) meta = tokBar(u) + '<br>' + (u.c>0?'<span class="cr">'+u.c.toFixed(1)+' 积分</span>':((curNC||FREE[e.m])?'<span class="muted">不计积分</span>':'0 积分'))
-         + ' · '+fmtTok(u.it+u.ot)+' tok';
+  if(u){
+    var bill;
+    if(u.c>0) bill = '<span class="bill paid" title="这一步的真实积分，平台逐请求回传，与 App 账单同源">'+u.c.toFixed(1)+' 积分</span>';
+    else if(curNC||FREE[e.m]) bill = '<span class="bill free" title="这一步跑在免费/预览通道模型上：token 照样消耗、上下文照样滚，但平台不扣积分">不计积分</span>';
+    else bill = '<span class="bill zero">0 积分</span>';
+    meta = tokBar(u) + '<br>' + bill + '<span class="tokn" title="这一步消耗的 token 合计（输入+输出）">'+fmtTok(u.it+u.ot)+' token</span>';
+  }
   return '<div class="step"><div class="ix">'+(i+1)+'</div>'+badge+'<div class="body">'+body+'</div><div class="meta">'+meta+'</div></div>';
 }
 function toggleDetail(el){
