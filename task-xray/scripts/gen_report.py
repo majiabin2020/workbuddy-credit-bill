@@ -406,31 +406,77 @@ def svg_model_bars():
     return ''.join(out)
 
 
-def build_story():
-    """用本机真实数据生成「为什么倍率低反而耗积分」的解释段。
-    例证：本机花钱最多的模型 vs 每百万 token 实际最省的模型，再讲清 token 总量由任务决定。"""
+def svg_story():
+    """「一笔积分账怎么花出去的」图解：流程框 + 滚雪球柱 + 公式卡，替代纯文字解释"""
+    T, M, B = 'var(--text)', 'var(--muted)', 'var(--border)'
+    A, W = 'var(--accent)', 'var(--credit)'
+    o = ['<svg viewBox="0 0 680 316" class="chart" role="img" aria-label="积分账单形成过程图解">']
+
+    # —— 第一行：一次请求的生命周期（4 个框 + 箭头 + 回环）——
+    boxes = ['你提问', 'agent 思考', '调用工具/技能', '结果塞回上下文']
+    for i, txt in enumerate(boxes):
+        x0 = 10 + i * 168
+        o.append('<rect x="%d" y="10" width="148" height="46" rx="8" fill="var(--card)" stroke="%s" stroke-width="1.2"/>'
+                 '<text x="%d" y="38" text-anchor="middle" fill="%s" font-size="13" font-weight="600">%s</text>'
+                 % (x0, B, x0 + 74, T, esc(txt)))
+        if i < 3:
+            ax = x0 + 150
+            o.append('<line x1="%d" y1="33" x2="%d" y2="33" stroke="%s" stroke-width="1.4"/><polygon points="%d,29 %d,33 %d,29" fill="%s"/>'
+                     % (ax, ax + 14, M, ax + 10, ax + 16, ax + 10, M))
+    # 回环箭头：第 4 框 → 第 2 框（下一轮把全部历史再发一遍，循环）
+    o.append('<path d="M 594 58 L 594 76 L 264 76 L 264 62" fill="none" stroke="%s" stroke-width="1.3" stroke-dasharray="4 3"/>'
+             '<polygon points="260,66 264,58 268,66" fill="%s"/>'
+             '<text x="429" y="72" text-anchor="middle" fill="%s" font-size="11.5">下一轮带着全部历史再来一遍，循环 N 轮</text>' % (M, M, M))
+
+    # —— 第二行左：上下文滚雪球柱 ——
+    snow = [('第1轮', 3), ('第2轮', 5.5), ('第3轮', 8), ('第4轮', 11), ('第N轮', 15)]
+    base, bw, gap, x0 = 244, 40, 18, 46
+    mx = max(v for _, v in snow)
+    o.append('<text x="10" y="104" fill="%s" font-size="12.5" font-weight="600">上下文滚雪球：每轮请求都把历史再发一遍</text>' % T)
+    for i, (lbl, v) in enumerate(snow):
+        h = v / mx * 108
+        x = x0 + i * (bw + gap)
+        o.append('<rect x="%d" y="%.1f" width="%d" height="%.1f" rx="4" fill="var(--it)" opacity="%.2f"/>'
+                 '<text x="%d" y="%.1f" text-anchor="middle" fill="%s" font-size="10.5">%.0f万</text>'
+                 '<text x="%d" y="258" text-anchor="middle" fill="%s" font-size="11">%s</text>'
+                 % (x, base - h, bw, h, 0.45 + i * 0.12, x + bw / 2, base - h - 5, M, v,
+                    x + bw / 2, T, esc(lbl)))
+    o.append('<text x="46" y="276" fill="%s" font-size="11">柱子 = 每轮请求发送的 token（示意），最后一轮的积分由全部轮次加总</text>' % M)
+
+    # —— 第二行右：两张卡片 ——
+    rx = 386
+    o.append('<rect x="%d" y="112" width="284" height="72" rx="8" fill="var(--card)" stroke="%s" stroke-width="1.2"/>'
+             '<text x="%d" y="136" fill="%s" font-size="12" font-weight="600">积分怎么算</text>'
+             '<text x="%d" y="158" fill="%s" font-size="12.5">积分 = 每轮 token 加总 × 模型单价</text>'
+             '<text x="%d" y="176" fill="%s" font-size="10.5">单价≈标称倍率，缓存/思考/输出计价各不同</text>'
+             % (rx, B, rx + 14, T, rx + 14, W, rx + 14, M))
+    # 动态例证卡
     cand = [r for r in model_rows if r['credit'] > 0 and r['steps'] >= 20]
-    if not cand: return ''
-    top = max(cand, key=lambda r: r['credit'])            # 本机积分花得最多的模型
-    thrifty = min(cand, key=lambda r: r['rate'])          # 每百万 token 实际最省的模型
-    s = []
-    s.append('拿本机的真实账单举例：花钱最多的是 <b>%s</b>，标称倍率 <b>%s</b> 看着不高，'
-             '但它一共跑了 <b>%s</b> 步请求、烧掉 <b>%s</b> token，合计花掉 <b>%s</b> 积分，'
-             '摊下来每百万 token 实际要 <b>%.1f</b> 积分。'
-             % (esc(top['m']), ('%.2fx' % top['mult']) if top['mult'] is not None else '未知',
-                '{:,}'.format(top['steps']), fmt_tokens(top['it'] + top['ot']),
-                '{:,.0f}'.format(top['credit']), top['rate']))
-    if thrifty['m'] != top['m']:
-        s.append('作为对照，<b>%s</b> 每百万 token 实际只要 <b>%.1f</b> 积分（标称 %s），'
-                 '但本机在它上面只花了 %s 积分——因为用它跑的任务少、轮次少。'
-                 % (esc(thrifty['m']), thrifty['rate'],
-                    ('%.2fx' % thrifty['mult']) if thrifty['mult'] is not None else '未知',
-                    '{:,.0f}'.format(thrifty['credit'])))
-    s.append('所以积分账单要看两件事：<b>每单位 token 多少钱</b>（倍率只是个名义参考，实际还受缓存命中、'
-             '思考 token、输出 token 的影响）和 <b>实际烧掉了多少 token</b>。后者由任务决定——agent 每一轮思考、'
-             '每一次读文件、每一次调用工具或技能，返回的结果都会塞回上下文，跟着下一轮请求原样再发一遍，'
-             '上下文像滚雪球一样越滚越大。任务越复杂、轮次越多、工具回填越厚，'
-             '倍率再低的模型也照样能烧出高积分。下面每个会话的「上下文滚雪球」图，说的就是这个过程。')
+    if cand:
+        top = max(cand, key=lambda r: r['credit'])
+        thr = min(cand, key=lambda r: r['rate'])
+        o.append('<rect x="%d" y="194" width="284" height="72" rx="8" fill="var(--card)" stroke="%s" stroke-width="1.2"/>'
+                 '<text x="%d" y="218" fill="%s" font-size="12" font-weight="600">本机真实账单</text>'
+                 '<text x="%d" y="240" fill="%s" font-size="12">花最多：%s，实际 %.1f 积分/百万token</text>'
+                 '<text x="%d" y="258" fill="%s" font-size="12">最省：%s，实际 %.1f 积分/百万token</text>'
+                 % (rx, B, rx + 14, T, rx + 14, T, esc(top['m']), top['rate'],
+                    rx + 14, M, esc(thr['m']), thr['rate']))
+
+    # —— 结论条 ——
+    o.append('<rect x="10" y="282" width="660" height="30" rx="8" fill="var(--accent)" fill-opacity="0.08"/>'
+             '<text x="340" y="301" text-anchor="middle" fill="%s" font-size="12.5" font-weight="600">'
+             '倍率只是单价，任务决定烧多少 token。任务越复杂、轮次越多，倍率再低也能烧出高积分。</text>' % T)
+    o.append('</svg>')
+    return ''.join(o)
+
+
+def build_story():
+    """故事卡 = 图解 + 一行补充说明"""
+    s = [svg_story()]
+    s.append('<p class="muted" style="margin:12px 2px 0">看懂这张图，就看懂了积分账单：倍率决定的是「每单位 token 多少钱」，'
+             '而账单 = 单价 × 实际烧掉的 token。agent 每一轮思考、每一次读文件、每一次调用工具或技能，'
+             '返回的结果都会塞回上下文，跟着下一轮请求原样再发一遍——任务越复杂、轮次越多、工具回填越厚，'
+             'token 总量就越大。下面每个会话的「上下文滚雪球」图，说的就是这件事在你电脑上的真实发生过程。</p>')
     return ''.join(s)
 
 
@@ -525,7 +571,7 @@ tr:last-child td{border-bottom:none}
 .sess-row{cursor:pointer}
 .sess-row:hover{background:rgba(91,91,214,.06)}
 .sess-row.sel{background:rgba(91,91,214,.10)}
-.sess-row.no-replay{cursor:default;opacity:.55}
+.sess-row.no-replay{opacity:.62}
 .s-title{max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .tools-cell{max-width:200px;font-size:12px}
 .tag{display:inline-block;font-size:11px;padding:1px 7px;border-radius:20px;background:rgba(91,91,214,.12);color:var(--accent);margin-left:6px;vertical-align:1px}
@@ -650,10 +696,11 @@ function fmtTok(n){ if(n>=1e8) return (n/1e8).toFixed(2)+' 亿'; if(n>=1e4) retu
 function fmtDt(ts){ if(!ts) return '—'; var d=new Date(ts*1000); function p(x){return (x<10?'0':'')+x;} return p(d.getMonth()+1)+'-'+p(d.getDate())+' '+p(d.getHours())+':'+p(d.getMinutes()); }
 function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 
-// 主题
-var theme = localStorage.getItem('tx-theme') || 'light';
+// 主题（localStorage 在某些内嵌预览的沙箱里会禁用，必须兜底，否则整页脚本崩掉）
+var theme = 'light';
+try { theme = localStorage.getItem('tx-theme') || 'light'; } catch(e) {}
 document.documentElement.setAttribute('data-theme', theme);
-$('themeBtn').onclick = function(){ theme = theme==='light'?'dark':'light'; document.documentElement.setAttribute('data-theme', theme); localStorage.setItem('tx-theme', theme); };
+$('themeBtn').onclick = function(){ theme = theme==='light'?'dark':'light'; document.documentElement.setAttribute('data-theme', theme); try { localStorage.setItem('tx-theme', theme); } catch(e) {} };
 
 // 窗口过滤
 var curDays = 7;
@@ -665,7 +712,7 @@ function renderList(){
     if(cut && s.st < cut) return;
     n++;
     var tools = Object.keys(s.tools||{}).slice(0,3).map(function(k){return esc(k)+'×'+s.tools[k];}).join('、') || '—';
-    html += '<tr class="sess-row" data-id="'+esc(s.id)+'">'
+    html += '<tr class="sess-row'+(s.replay?'':' no-replay')+'" data-id="'+esc(s.id)+'">'
       + '<td class="nowrap">'+fmtDt(s.st)+'</td>'
       + '<td class="s-title" title="'+esc(s.id)+'">'+esc(s.t)+(s.replay?'':' <span class="tag tag-warn">超出回放范围</span>')+'</td>'
       + '<td class="nowrap muted">'+esc(s.w)+'</td>'
@@ -743,9 +790,21 @@ function toggleDetail(el){
 function openSession(id){
   var s = null;
   DATA.sessions.forEach(function(x){ if(x.id===id) s=x; });
-  if(!s || !s.replay){ return; }
-  curNC = !!s.nc;
+  if(!s){ return; }
   Array.prototype.forEach.call(document.querySelectorAll('.sess-row'), function(r){ r.classList.toggle('sel', r.dataset.id===id); });
+  if(!s.replay){
+    // 生成时没嵌入这个会话的完整流程：给出明确提示，不再静默无反应
+    $('replayBox').innerHTML = '<div class="replay-head"><h2 style="margin:0">'+esc(s.t)+'</h2><span class="muted">'+fmtDt(s.st)+' · '+esc(s.w)+'</span></div>'
+      + '<div style="padding:28px 6px;line-height:2">'
+      + '<div style="font-weight:600;margin-bottom:6px">这个会话只有汇总，没有逐步流程</div>'
+      + '<div class="muted">生成看板时默认只把近 '+DATA.replay_days+' 天的会话嵌入完整回放，这个会话不在范围内（共 '+s.steps.toLocaleString()+' 步请求、'+(s.nc?'不计积分':s.credit.toLocaleString()+' 积分')+'、'+fmtTok(s.it+s.ot)+' token）。</div>'
+      + '<div>想看它的完整流程，在对话里对 AI 说一句「<b>重新生成任务X光，回放全部会话</b>」就行了。</div>'
+      + '</div>';
+    $('replayCard').style.display = '';
+    $('replayCard').scrollIntoView({behavior:'smooth', block:'start'});
+    return;
+  }
+  curNC = !!s.nc;
   var evs = s.evs || [];
   var html = '<div class="replay-head"><h2 style="margin:0">'+esc(s.t)+'</h2><span class="muted">'+fmtDt(s.st)+' · '+esc(s.w)+'</span></div>'
     + '<div class="replay-stats">'
