@@ -77,6 +77,7 @@ def grab_usage(o):
     ctd = ru.get('completion_tokens_details') or {}
     model = pd.get('model') or pd.get('requestModelId') or pd.get('requestModelName') or 'unknown'
     return dict(model=model,
+                crid=pd.get('conversationRequestId'),
                 it=int(ru.get('prompt_tokens') or 0),
                 ot=int(ru.get('completion_tokens') or 0),
                 ch=int(ch or 0),
@@ -208,6 +209,7 @@ replay_cutoff = gen_ms - REPLAY_DAYS * 86400000 if REPLAY_DAYS > 0 else 0
 
 ws_names, ws_idx, cwd_by_folder = {}, {}, {}
 sessions = {}
+style_rounds = {}   # conversationRequestId -> 一次用户指令轮次的聚合（供「模型干活节奏」统计，按轮次去重）
 files = glob.glob(os.path.join(PROJECTS, '**', '*.jsonl'), recursive=True)
 if not files:
     print('错误：在 %s 下没有找到任何 .jsonl 会话日志。' % PROJECTS)
@@ -281,6 +283,7 @@ for fp in files:
     # 汇总（只统计带 usage 的步骤，token/积分以官方逐请求真实值为准）——必须在事件截断之前算，保证总数不丢
     tot = dict(it=0, ot=0, ch=0, think=0, credit=0.0, steps=0)
     models_used, tools_used = {}, {}
+    round_acc = {}   # 本文件内 crid -> 一次指令轮次的步数/积分分布
     for e in events:
         u = e.get('u')
         if e['k'] == 'tool':
@@ -289,6 +292,15 @@ for fp in files:
             tot['it'] += u['it']; tot['ot'] += u['ot']; tot['ch'] += u['ch']
             tot['think'] += u['think']; tot['credit'] += u['credit'] or 0; tot['steps'] += 1
             models_used[u['model']] = models_used.get(u['model'], 0) + 1
+            if u.get('crid'):
+                r = round_acc.setdefault(u['crid'], dict(ms={}, it=0, ot=0, credit=0.0))
+                r['ms'][u['model']] = r['ms'].get(u['model'], 0) + 1
+                r['it'] += u['it']; r['ot'] += u['ot']; r['credit'] += u['credit'] or 0
+    # 按轮次去重后并入全局（主会话与子代理日志可能出现同一轮次，合并而不是重复计）
+    for crid, r in round_acc.items():
+        gr = style_rounds.setdefault(crid, dict(ms={}, it=0, ot=0, credit=0.0))
+        for m, n in r['ms'].items(): gr['ms'][m] = gr['ms'].get(m, 0) + n
+        gr['it'] += r['it']; gr['ot'] += r['ot']; gr['credit'] += r['credit']
     # 单会话事件数超限：保留首 300 + 尾 300（只影响回放展示，不影响上面的汇总）
     if len(events) > MAX_EVENTS:
         truncated = len(events) - 600
@@ -359,6 +371,34 @@ for m, steps in sorted(g_models.items(), key=lambda x: -x[1]):
                            rate=(cr / tt * 1e6 if tt else 0), mult=nominal_mult(m)))
 model_rows.sort(key=lambda r: -r['credit'])
 
+# ---------- 模型干活节奏（每条用户指令平均跑多少步，反映模型的做事风格） ----------
+MIN_INSTR = 5   # 指令数低于该值的模型只列数据、不贴标签（样本太少没有参考价值）
+
+def pace_label(avg, n):
+    if n < MIN_INSTR: return None
+    if avg < 8: return '干脆利落'
+    if avg <= 15: return '正常节奏'
+    return '步子细密'
+
+style_acc = {}
+for crid, r in style_rounds.items():
+    if not r['ms']: continue
+    dom = max(r['ms'], key=r['ms'].get)   # 一轮里步数最多的模型 = 这条指令的主劳力
+    a = style_acc.setdefault(dom, dict(instr=0, steps=0, tok=0, credit=0.0))
+    a['instr'] += 1
+    a['steps'] += sum(r['ms'].values())
+    a['tok'] += r['it'] + r['ot']
+    a['credit'] += r['credit']
+
+style_rows = []
+for m, a in style_acc.items():
+    avg_steps = a['steps'] / a['instr']
+    style_rows.append(dict(m=m, instr=a['instr'], avg_steps=avg_steps,
+                           label=pace_label(avg_steps, a['instr']),
+                           avg_tok=a['tok'] / max(1, a['steps']),
+                           avg_credit=a['credit'] / a['instr']))
+style_rows.sort(key=lambda r: -r['avg_steps'])
+
 sess_list = []
 for sid, d in sessions.items():
     if d['tot']['steps'] == 0: continue
@@ -419,6 +459,37 @@ def svg_model_bars():
         out.append('<p class="muted" style="margin-top:10px">上图只画了计费模型。另有几个模型的日志积分一直是 0，'
                    '它们走的是免费或预览通道，不扣积分：%s。token 是真实消耗的，只是平台不扣积分，'
                    '所以这类会话在列表里显示「不计积分」。</p>' % names)
+    return ''.join(out)
+
+
+def build_model_style():
+    """「不同模型的干活节奏」表：每条指令平均跑几步、每步背多重、平均花多少积分"""
+    if not style_rows: return '<p class="muted">暂无数据</p>'
+    out = ['<div style="overflow-x:auto"><table><thead><tr>'
+           '<th>模型</th><th class="num">处理指令数</th><th class="num">平均每条指令</th>'
+           '<th>干活节奏</th><th class="num">平均每步 token</th><th class="num">平均每条指令积分</th>'
+           '</tr></thead><tbody>']
+    for r in style_rows[:12]:
+        if r['label'] == '干脆利落':
+            lbl = '<span class="tag" style="background:rgba(14,159,110,.14);color:var(--ok)">干脆利落</span>'
+        elif r['label'] == '步子细密':
+            lbl = '<span class="tag tag-warn">步子细密</span>'
+        elif r['label']:
+            lbl = '<span class="tag">正常节奏</span>'
+        else:
+            lbl = '<span class="muted" style="font-size:11px">样本太少</span>'
+        credit_s = ('<span class="muted">不计积分</span>' if r['avg_credit'] <= 0 else '%.1f' % r['avg_credit'])
+        out.append('<tr><td class="nowrap strong">%s</td><td class="num">%d</td>'
+                   '<td class="num">%.1f 步</td><td>%s</td>'
+                   '<td class="num">%s</td><td class="num strong">%s</td></tr>'
+                   % (esc(r['m']), r['instr'], r['avg_steps'], lbl,
+                      fmt_tokens(r['avg_tok']), credit_s))
+    out.append('</tbody></table></div>')
+    out.append('<div class="legend" style="margin-top:10px">'
+               '这个节奏是照你自己的账单算的：你交给它什么活，它就长出什么风格，任务难度不同不能直接横向比。'
+               '指令数少于 %d 的模型只列数据、不贴标签，样本太少没有参考价值。'
+               '步数多也不代表差——可能它每步干得少、自检得多；选型时重点看最后一列平均积分，'
+               '再结合上图的单价，两笔账一起算就知道谁贵在哪了。</div>' % MIN_INSTR)
     return ''.join(out)
 
 
@@ -687,6 +758,11 @@ footer{margin-top:28px;color:var(--muted);font-size:12px;line-height:1.9;border-
 </div>
 
 <div class="card">
+  <h2><span class="dot"></span>不同模型的干活节奏：谁利索谁磨叽，一目了然 <span class="muted" style="font-weight:400;font-size:12px">（给选型做参考：看节奏明白为什么贵，看积分决定用不用）</span></h2>
+  __MODEL_STYLE__
+</div>
+
+<div class="card">
   <h2><span class="dot"></span>积分被哪些工具消耗得多（调用 TOP10）</h2>
   <div style="margin-bottom:8px">__TOOL_CATS__</div>
   <div>__TOOL_TAGS__</div>
@@ -904,6 +980,7 @@ html = (HTML
         .replace('__N_CACHE__', '%.0f' % cache_hit_pct)
         .replace('__STORY__', story_html)
         .replace('__MODEL_BARS__', svg_model_bars())
+        .replace('__MODEL_STYLE__', build_model_style())
         .replace('__MULT_SRC__', esc(MULT_SRC))
         .replace('__TOOL_TAGS__', tool_tags)
         .replace('__TOOL_CATS__', tool_cat_tags)
